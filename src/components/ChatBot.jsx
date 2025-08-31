@@ -1,0 +1,275 @@
+import { useState, useRef, useEffect } from "react";
+import "../App.css";
+import axios from "axios";
+import ReactMarkdown from "react-markdown";
+import systemPrompt from "../prompt";
+
+function ChatBot() {
+  const [chatHistory, setChatHistory] = useState([]);
+  const [question, setQuestion] = useState("");
+  const [generatingAnswer, setGeneratingAnswer] = useState(false);
+  const [step, setStep] = useState(0); // track number of diagnostic questions
+  const [sessionDone, setSessionDone] = useState(false);
+  const chatContainerRef = useRef(null);
+
+  const maxQuestions = 6; // ask 5–6 questions
+
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatHistory, generatingAnswer]);
+
+  async function getNextQuestion(userResponses, step) {
+    try {
+      const response = await axios({
+        method: "post",
+        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${
+          import.meta.env.VITE_API_GENERATIVE_LANGUAGE_CLIENT
+        }`,
+        data: {
+          contents: [
+            systemPrompt,
+            {
+              role: "user",
+              parts: [
+                {
+                  text: `You are acting as an Ayurvedic herbal doctor. 
+So far, the patient has answered these:\n${userResponses
+                    .map((r, i) => `Q${i + 1}: ${r.q}\nA${i + 1}: ${r.a}`)
+                    .join("\n")}
+
+Now generate the next diagnostic question number ${step + 1}. 
+Keep it short, simple and conversational.`
+                }
+              ]
+            }
+          ]
+        }
+      });
+
+      return (
+        response.data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+        "Can you share more about your health?"
+      );
+    } catch (err) {
+      console.error("Question Generation Error:", err);
+      return "Can you share more details about your health?";
+    }
+  }
+
+  async function getFinalAdvice(userResponses) {
+    try {
+      const response = await axios({
+        method: "post",
+        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${
+          import.meta.env.VITE_API_GENERATIVE_LANGUAGE_CLIENT
+        }`,
+        data: {
+          contents: [
+            systemPrompt,
+            {
+              role: "user",
+              parts: [
+                {
+                  text: `You are an Ayurvedic herbal doctor. 
+The patient answered these diagnostic questions:\n${userResponses
+                    .map((r, i) => `Q${i + 1}: ${r.q}\nA${i + 1}: ${r.a}`)
+                    .join("\n")}
+
+Based on Ayurveda, identify their likely dosha imbalance if possible, 
+and recommend 10 practical Ayurvedic solutions, including herbs, lifestyle changes, and dietary advice. 
+Keep the tone friendly and easy to follow.`
+                }
+              ]
+            }
+          ]
+        }
+      });
+
+      return (
+        response.data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+        "Sorry, I couldn’t generate advice this time."
+      );
+    } catch (err) {
+      console.error("Advice Error:", err);
+      return "Something went wrong while generating advice.";
+    }
+  }
+
+  async function generateAnswer(e) {
+    if (e) e.preventDefault();
+    if (!question.trim()) return;
+
+    const currentAnswer = question;
+    setQuestion("");
+
+    // Save user response
+    setChatHistory((prev) => [
+      ...prev,
+      { type: "question", content: currentAnswer }
+    ]);
+
+    setGeneratingAnswer(true);
+
+    // Collect previous Q/A
+    const userResponses = [];
+    let lastQ = "";
+    chatHistory.forEach((msg) => {
+      if (msg.type === "answer") {
+        lastQ = msg.content;
+      } else if (msg.type === "question" && lastQ) {
+        userResponses.push({ q: lastQ, a: msg.content });
+        lastQ = "";
+      }
+    });
+    // add current
+    if (chatHistory.length > 0) {
+      const lastBotQ = chatHistory
+        .slice()
+        .reverse()
+        .find((m) => m.type === "answer");
+      if (lastBotQ) {
+        userResponses.push({ q: lastBotQ.content, a: currentAnswer });
+      }
+    }
+
+    // If less than maxQuestions → ask next
+    if (step < maxQuestions - 1) {
+      const nextQ = await getNextQuestion(userResponses, step);
+      setStep(step + 1);
+      setChatHistory((prev) => [
+        ...prev,
+        { type: "answer", content: nextQ }
+      ]);
+      setGeneratingAnswer(false);
+    } else {
+      // After max questions → give final advice
+      let advice = await getFinalAdvice(userResponses);
+
+      // Append Shop Now button (styled)
+      advice += `\n\n<a href="https://herbokat.in/products" target="_blank" rel="noopener noreferrer" style="display:inline-block; margin-top:10px; padding:10px 16px; background-color:#16a34a; color:white; border-radius:8px; text-decoration:none; font-weight:600;">🛒 Shop Now</a>`;
+
+      setChatHistory((prev) => [
+        ...prev,
+        { type: "answer", content: advice }
+      ]);
+      setSessionDone(true);
+      setGeneratingAnswer(false);
+    }
+  }
+
+  function restartChat() {
+    setChatHistory([
+      {
+        type: "answer",
+        content:
+          "🌿 Namaste 🙏 I am your Ayurvedic Herbal Doctor. I will ask you 5–6 questions to understand your health, and then I’ll recommend remedies. Let’s begin! What is your main health issue or symptom?"
+      }
+    ]);
+    setStep(0);
+    setQuestion("");
+    setSessionDone(false);
+  }
+
+  // Start chat automatically
+  useEffect(() => {
+    if (chatHistory.length === 0) {
+      restartChat();
+    }
+  }, []);
+
+  return (
+    <div className="flex flex-col h-full bg-white rounded-md shadow-md p-4">
+      {/* Restart Button */}
+      <div className="flex justify-end mb-2">
+        <button
+          onClick={restartChat}
+          className="px-3 py-1 bg-red-100 text-red-600 rounded-md text-sm hover:bg-red-200"
+        >
+          🔄 Restart
+        </button>
+      </div>
+
+      {/* Chat History */}
+      <div
+        ref={chatContainerRef}
+        className="flex-1 overflow-y-auto mb-4 rounded-lg bg-gray-50 shadow-inner p-3 hide-scrollbar"
+      >
+        {chatHistory.map((chat, idx) => (
+          <div
+            key={idx}
+            className={`mb-3 ${
+              chat.type === "question" ? "text-right" : "text-left"
+            }`}
+          >
+            <div
+              className={`inline-block max-w-[80%] p-3 rounded-lg overflow-auto hide-scrollbar ${
+                chat.type === "question"
+                  ? "bg-green-500 text-white rounded-br-none"
+                  : "bg-yellow-100 text-gray-900 rounded-bl-none"
+              }`}
+            >
+              <ReactMarkdown
+                components={{
+                  a: ({ node, ...props }) => (
+                    <a
+                      {...props}
+                      className="inline-block mt-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition font-semibold"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    />
+                  ),
+                }}
+              >
+                {chat.content}
+              </ReactMarkdown>
+            </div>
+          </div>
+        ))}
+
+        {generatingAnswer && (
+          <div className="text-left">
+            <div className="inline-block bg-gray-100 p-3 rounded-lg animate-pulse">
+              Thinking...
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Input Box */}
+      {!sessionDone && (
+        <form
+          onSubmit={generateAnswer}
+          className="bg-white rounded-lg p-2 border flex gap-2"
+        >
+          <textarea
+            required
+            className="flex-1 border border-gray-300 rounded p-2 focus:border-green-400 focus:ring-1 focus:ring-green-400 resize-none"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            placeholder="Answer the doctor's question here..."
+            rows="2"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                generateAnswer(e);
+              }
+            }}
+          ></textarea>
+          <button
+            type="submit"
+            disabled={generatingAnswer}
+            className={`px-5 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition ${
+              generatingAnswer ? "opacity-50 cursor-not-allowed" : ""
+            }`}
+          >
+            Send
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+export default ChatBot;

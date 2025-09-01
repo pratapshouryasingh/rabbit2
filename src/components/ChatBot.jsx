@@ -3,22 +3,24 @@ import "../App.css";
 import axios from "axios";
 import ReactMarkdown from "react-markdown";
 import systemPrompt from "../prompt";
+import rehypeRaw from "rehype-raw";
 
 function ChatBot() {
   const [chatHistory, setChatHistory] = useState([]);
   const [question, setQuestion] = useState("");
   const [generatingAnswer, setGeneratingAnswer] = useState(false);
-  const [step, setStep] = useState(0); // track number of diagnostic questions
+  const [step, setStep] = useState(0);
   const [sessionDone, setSessionDone] = useState(false);
+  const [showShopLink, setShowShopLink] = useState(false);
   const chatContainerRef = useRef(null);
 
-  const maxQuestions = 6; // ask 5–6 questions
+  const maxQuestions = 6;
 
   useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
-  }, [chatHistory, generatingAnswer]);
+  }, [chatHistory, generatingAnswer, showShopLink]);
 
   async function getNextQuestion(userResponses, step) {
     try {
@@ -89,7 +91,7 @@ Keep the tone friendly and easy to follow.`
 
       return (
         response.data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-        "Sorry, I couldn’t generate advice this time."
+        "Sorry, I couldn't generate advice this time."
       );
     } catch (err) {
       console.error("Advice Error:", err);
@@ -104,7 +106,6 @@ Keep the tone friendly and easy to follow.`
     const currentAnswer = question;
     setQuestion("");
 
-    // Save user response
     setChatHistory((prev) => [
       ...prev,
       { type: "question", content: currentAnswer }
@@ -112,7 +113,6 @@ Keep the tone friendly and easy to follow.`
 
     setGeneratingAnswer(true);
 
-    // Collect previous Q/A
     const userResponses = [];
     let lastQ = "";
     chatHistory.forEach((msg) => {
@@ -123,7 +123,7 @@ Keep the tone friendly and easy to follow.`
         lastQ = "";
       }
     });
-    // add current
+    
     if (chatHistory.length > 0) {
       const lastBotQ = chatHistory
         .slice()
@@ -134,7 +134,6 @@ Keep the tone friendly and easy to follow.`
       }
     }
 
-    // If less than maxQuestions → ask next
     if (step < maxQuestions - 1) {
       const nextQ = await getNextQuestion(userResponses, step);
       setStep(step + 1);
@@ -144,16 +143,13 @@ Keep the tone friendly and easy to follow.`
       ]);
       setGeneratingAnswer(false);
     } else {
-      // After max questions → give final advice
-      let advice = await getFinalAdvice(userResponses);
-
-      // Append Shop Now button (styled)
-      advice += `\n\n<a href="https://herbokat.in/products" target="_blank" rel="noopener noreferrer" style="display:inline-block; margin-top:10px; padding:10px 16px; background-color:#16a34a; color:white; border-radius:8px; text-decoration:none; font-weight:600;">🛒 Shop Now</a>`;
-
+      const advice = await getFinalAdvice(userResponses);
+      
       setChatHistory((prev) => [
         ...prev,
         { type: "answer", content: advice }
       ]);
+      setShowShopLink(true);
       setSessionDone(true);
       setGeneratingAnswer(false);
     }
@@ -164,15 +160,15 @@ Keep the tone friendly and easy to follow.`
       {
         type: "answer",
         content:
-          "🌿 Namaste 🙏 I am your Ayurvedic Herbal Doctor. I will ask you 5–6 questions to understand your health, and then I’ll recommend remedies. Let’s begin! What is your main health issue or symptom?"
+          "🌿 Namaste 🙏 I am your Ayurvedic Herbal Doctor. I will ask you 5–6 questions to understand your health, and then I'll recommend remedies. Let's begin! What is your main health issue or symptom?"
       }
     ]);
     setStep(0);
     setQuestion("");
     setSessionDone(false);
+    setShowShopLink(false);
   }
 
-  // Start chat automatically
   useEffect(() => {
     if (chatHistory.length === 0) {
       restartChat();
@@ -180,7 +176,15 @@ Keep the tone friendly and easy to follow.`
   }, []);
 
   return (
-    <div className="flex flex-col h-full bg-white rounded-md shadow-md p-4">
+    <div 
+      className="flex flex-col h-full bg-white rounded-md shadow-md p-4"
+      style={{
+        backgroundImage: "url('/background-image.jpg')",
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat"
+      }}
+    >
       {/* Restart Button */}
       <div className="flex justify-end mb-2">
         <button
@@ -194,7 +198,7 @@ Keep the tone friendly and easy to follow.`
       {/* Chat History */}
       <div
         ref={chatContainerRef}
-        className="flex-1 overflow-y-auto mb-4 rounded-lg bg-gray-50 shadow-inner p-3 hide-scrollbar"
+        className="flex-1 overflow-y-auto mb-4 rounded-lg bg-gray-50 bg-opacity-90 shadow-inner p-3 hide-scrollbar"
       >
         {chatHistory.map((chat, idx) => (
           <div
@@ -211,16 +215,7 @@ Keep the tone friendly and easy to follow.`
               }`}
             >
               <ReactMarkdown
-                components={{
-                  a: ({ node, ...props }) => (
-                    <a
-                      {...props}
-                      className="inline-block mt-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition font-semibold"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    />
-                  ),
-                }}
+                rehypePlugins={[rehypeRaw]}
               >
                 {chat.content}
               </ReactMarkdown>
@@ -237,11 +232,25 @@ Keep the tone friendly and easy to follow.`
         )}
       </div>
 
+      {/* Shop Now Link (outside chat bubbles) */}
+      {showShopLink && (
+        <div className="flex justify-center mb-4">
+          <a
+            href="https://herbokat.in/products"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 transition font-semibold text-center"
+          >
+            🛒 Shop Products at Herbokat
+          </a>
+        </div>
+      )}
+
       {/* Input Box */}
       {!sessionDone && (
         <form
           onSubmit={generateAnswer}
-          className="bg-white rounded-lg p-2 border flex gap-2"
+          className="bg-white bg-opacity-90 rounded-lg p-2 border flex gap-2"
         >
           <textarea
             required
